@@ -302,7 +302,14 @@ def get_downloads(recording):
         raise Exception
 
     downloads = []
+    pending = 0
     for download in recording["recording_files"]:
+        # Zoom reports "processing" until the file is finalized; downloading one
+        # in that state yields a truncated file, so leave it for a later run.
+        if download.get("status", "completed") != "completed":
+            pending += 1
+            continue
+
         file_type = download["file_type"]
         file_extension = download["file_extension"]
         recording_id = download["id"]
@@ -318,7 +325,7 @@ def get_downloads(recording):
         download_url = f"{download['download_url']}?access_token={ACCESS_TOKEN}"
         downloads.append((file_type, file_extension, download_url, recording_type, recording_id))
 
-    return downloads
+    return downloads, pending
 
 
 def get_recordings(email, page_size, rec_start_date, rec_end_date):
@@ -655,7 +662,7 @@ def main():
                     )
                     continue
 
-                downloads = get_downloads(recording)
+                downloads, pending = get_downloads(recording)
 
             except Exception as e:
                 print(
@@ -666,12 +673,19 @@ def main():
 
             print(f"\n==> Processing recording {index + 1} of {total_count}")
 
-            for file_type, file_extension, download_url, recording_type, recording_id in downloads:
+            if pending:
+                print(
+                    f"    > {pending} file(s) still processing at Zoom; "
+                    f"will retry on a later run"
+                )
+
+            meeting_ok = True
+            for file_type, file_extension, download_url, recording_type, file_id in downloads:
                 try:
                     params = {
                         "file_extension": file_extension,
                         "recording": recording,
-                        "recording_id": recording_id,
+                        "recording_id": file_id,
                         "recording_type": recording_type
                     }
                     filename, folder_name = format_filename(params)
@@ -704,11 +718,16 @@ def main():
                         f"for recording {index + 1} of {total_count} due to error: "
                         f"{str(e)}{Color.END}"
                     )
+                    meeting_ok = False
                     continue
 
-            with open(COMPLETED_MEETING_IDS_LOG, "a") as fd:
-                fd.write(f"{recording_id}\n")
-                COMPLETED_MEETING_IDS.add(recording_id)
+            # recording_id is the meeting uuid. Only record the meeting as done when
+            # every file downloaded and none are still processing, so a partial or
+            # failed run is retried rather than silently skipped forever.
+            if meeting_ok and not pending:
+                with open(COMPLETED_MEETING_IDS_LOG, "a") as fd:
+                    fd.write(f"{recording_id}\n")
+                    COMPLETED_MEETING_IDS.add(recording_id)
 
 
 if __name__ == "__main__":
