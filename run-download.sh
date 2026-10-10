@@ -7,7 +7,7 @@
 
 set -uo pipefail
 
-cd ~/Sandbox/zoom-recording-downloader
+cd "$(dirname "$0")" || exit 1
 
 LOG="launchd.log"
 LOOKBACK_DAYS="${LOOKBACK_DAYS:-90}"
